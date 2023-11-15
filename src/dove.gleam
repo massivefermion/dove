@@ -32,6 +32,10 @@ pub type Body {
   PlainText(String)
 }
 
+pub fn connect(host: String, port: Int, timeout: Int) {
+  client.connect(host, port, timeout)
+}
+
 pub fn request(
   conn: client.Connection(a),
   method: Method,
