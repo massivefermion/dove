@@ -1,0 +1,24 @@
+name = "dove"
+version = "0.1.0"
+
+description = ""
+licences = ["Apache-2.0"]
+links = [{title = "Gleam", href = "https://gleam.run"}]
+repository = {type = "github", user = "massivefermion", repo = "dove"}
+
+internal_modules = [
+  "dove/tcp",
+  "dove/client",
+  "dove/request",
+  "dove/response/*",
+]
+
+[dependencies]
+gleam_erlang = "~> 0.23"
+gleam_json = "~> 0.7"
+gleam_otp = "~> 0.8"
+gleam_stdlib = "~> 0.32"
+mug = "~> 0.2"
+
+[dev-dependencies]
+gleeunit = "~> 1.0"
