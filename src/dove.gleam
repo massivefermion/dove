@@ -30,8 +30,9 @@ pub type RequestBody {
 
 pub type ResponseBody(a) {
   Empty
-  Decoded(a)
   Raw(String)
+  JSONDecoded(a)
+  InvalidOrUnexpectedJSON(String, json.DecodeError)
 }
 
 pub opaque type Connection(a) {
@@ -181,10 +182,14 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                               Ok(gleam_http_response.Response(
                                 status,
                                 headers,
-                                Decoded(value),
+                                JSONDecoded(value),
                               ))
                             Error(decode_error) ->
-                              Error(error.DecodeError(decode_error))
+                              Ok(gleam_http_response.Response(
+                                status,
+                                headers,
+                                InvalidOrUnexpectedJSON(body, decode_error),
+                              ))
                           }
                         option.None ->
                           Ok(gleam_http_response.Response(
