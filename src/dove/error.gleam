@@ -1,5 +1,5 @@
-import mug
 import gleam/json
+import mug
 
 pub type Error {
   WrongPacketType
@@ -8,6 +8,7 @@ pub type Error {
   InvalidHeader
   InvalidStatusLine
   TCPError(mug.Error)
+  UnableToSendRequest
   DecodeError(json.DecodeError)
   InvalidHeaderName(#(String, String))
   InvalidHeaderValue(#(String, String))
