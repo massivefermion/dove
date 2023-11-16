@@ -24,13 +24,14 @@ pub type RequestOption(a) {
 
 pub type RequestBody {
   JSON(String)
+  EmptyRequestBody
   PlainText(String)
 }
 
 pub type ResponseBody(a) {
-  Empty
   Raw(String)
   JSONDecoded(a)
+  EmptyResponseBody
   InvalidOrUnexpectedJSON(String, json.DecodeError)
 }
 
@@ -53,17 +54,18 @@ pub opaque type Connection(a) {
         Result(gleam_http_response.Response(ResponseBody(a)), error.Error),
       ),
     ),
+    default_timeout: Int,
   )
 }
 
 pub fn connect(host: String, port: Int, timeout: Int) {
   use socket <- result.then(tcp.connect(host, port, timeout))
-  Ok(Connection(host <> ":" <> int.to_string(port), socket, "", [], []))
+  Ok(Connection(host <> ":" <> int.to_string(port), socket, "", [], [], timeout))
 }
 
 pub fn request(
   conn: Connection(a),
-  request: Request(option.Option(RequestBody)),
+  request: Request(RequestBody),
   options: List(RequestOption(a)),
 ) {
   use <- bool.guard(
@@ -82,7 +84,7 @@ pub fn request(
   let decoder = get_decoder(options)
 
   let #(body, headers) = case request.body {
-    option.Some(JSON(body)) -> #(
+    JSON(body) -> #(
       option.Some(body),
       list.append(
         request.headers,
@@ -98,7 +100,7 @@ pub fn request(
       ),
     )
 
-    option.Some(PlainText(body)) -> #(
+    PlainText(body) -> #(
       option.Some(body),
       list.append(
         request.headers,
@@ -114,7 +116,7 @@ pub fn request(
       ),
     )
 
-    option.None -> #(option.None, request.headers)
+    EmptyRequestBody -> #(option.None, request.headers)
   }
 
   use request <- result.then(request.encode(
@@ -139,6 +141,7 @@ pub fn request(
       conn.buffer,
       list.append(conn.requests, [#(ref, decoder)]),
       conn.responses,
+      conn.default_timeout,
     ),
     ref,
   ))
@@ -200,13 +203,18 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                       }
 
                     #(status, headers, option.None) ->
-                      Ok(gleam_http_response.Response(status, headers, Empty))
+                      Ok(gleam_http_response.Response(
+                        status,
+                        headers,
+                        EmptyResponseBody,
+                      ))
                   }
                 })
                 |> result.flatten,
               ),
             ],
           ),
+          conn.default_timeout,
         )
 
       case rest {
@@ -226,6 +234,7 @@ pub fn get_response(conn: Connection(a), ref) {
 }
 
 pub fn shutdown(conn: Connection(a)) {
+  let conn = receive(conn, conn.default_timeout)
   mug.shutdown(conn.socket)
   |> result.map(fn(_) { conn.responses })
   |> result.map_error(fn(tcp_error) { error.TCPError(tcp_error) })
