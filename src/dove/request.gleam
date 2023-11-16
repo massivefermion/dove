@@ -8,24 +8,17 @@ pub fn encode(
   host: String,
   method: String,
   path: String,
-  query_params: List(#(String, String)),
+  query: option.Option(String),
   headers: List(#(String, String)),
   body: option.Option(String),
 ) {
   use <- bail_if_invalid_header(headers)
   let headers = list.prepend(headers, #("host", host))
 
-  let path =
-    path <> list.fold(
-      query_params,
-      "",
-      fn(acc, param) {
-        case string.length(acc) == 0 {
-          True -> "?" <> param.0 <> "=" <> param.1
-          False -> acc <> "&" <> param.0 <> "=" <> param.1
-        }
-      },
-    )
+  let path = case query {
+    option.None -> path
+    option.Some(query) -> path <> "?" <> query
+  }
 
   {
     request_line(method, path) <> {

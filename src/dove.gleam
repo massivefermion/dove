@@ -1,4 +1,5 @@
 import gleam/int
+import gleam/bool
 import gleam/list
 import gleam/option
 import gleam/result
@@ -10,6 +11,7 @@ import gleam/erlang
 import gleam/erlang/process
 import gleam/http
 import gleam/http/response as gleam_http_response
+import gleam/http/request.{type Request} as _gleam_http_request
 import dove/tcp
 import dove/error
 import dove/request
@@ -17,10 +19,7 @@ import dove/response
 import mug
 
 pub type RequestOption(a) {
-  Body(RequestBody)
-  Headers(List(#(String, String)))
-  QueryParams(List(#(String, String)))
-  ResponseDecoder(fn(dynamic.Dynamic) -> Result(a, List(dynamic.DecodeError)))
+  JSONDecoder(fn(dynamic.Dynamic) -> Result(a, List(dynamic.DecodeError)))
 }
 
 pub type RequestBody {
@@ -64,28 +63,29 @@ pub fn connect(host: String, port: Int, timeout: Int) {
 
 pub fn request(
   conn: Connection(a),
-  method: http.Method,
-  path: String,
+  request: Request(option.Option(RequestBody)),
   options: List(RequestOption(a)),
 ) {
-  let method = case method {
+  use <- bool.guard(
+    request.scheme == http.Https,
+    Error(error.HttpsNotSupportedYet),
+  )
+
+  let method = case request.method {
     http.Other(method) -> method
     _ -> {
-      let assert Ok(method) = list.key_find(method_mapping, method)
+      let assert Ok(method) = list.key_find(method_mapping, request.method)
       method
     }
   }
 
-  let query_params = get_query_params(options)
-  let headers = get_headers(options)
-  let body = get_body(options)
   let decoder = get_decoder(options)
 
-  let #(body, headers) = case body {
+  let #(body, headers) = case request.body {
     option.Some(JSON(body)) -> #(
       option.Some(body),
       list.append(
-        headers,
+        request.headers,
         [
           #("content-type", "application/json"),
           #(
@@ -101,7 +101,7 @@ pub fn request(
     option.Some(PlainText(body)) -> #(
       option.Some(body),
       list.append(
-        headers,
+        request.headers,
         [
           #("content-type", "text/plain"),
           #(
@@ -114,14 +114,14 @@ pub fn request(
       ),
     )
 
-    option.None -> #(option.None, headers)
+    option.None -> #(option.None, request.headers)
   }
 
   use request <- result.then(request.encode(
     conn.host,
     method,
-    path,
-    query_params,
+    request.path,
+    request.query,
     headers,
     body,
   ))
@@ -236,70 +236,19 @@ const method_mapping = [
   #(http.Options, "OPTIONS"),
 ]
 
-fn get_query_params(options: List(RequestOption(a))) {
-  case
-    list.find_map(
-      options,
-      fn(opt) {
-        case opt {
-          QueryParams(params) -> Ok(params)
-          _ -> Error(Nil)
-        }
-      },
-    )
-  {
-    Ok(params) -> params
-    Error(Nil) -> []
-  }
-}
-
 fn get_decoder(options: List(RequestOption(a))) {
   case
     list.find_map(
       options,
       fn(opt) {
         case opt {
-          ResponseDecoder(decoder) -> Ok(decoder)
+          JSONDecoder(decoder) -> Ok(decoder)
           _ -> Error(Nil)
         }
       },
     )
   {
     Ok(decoder) -> option.Some(decoder)
-    Error(Nil) -> option.None
-  }
-}
-
-fn get_headers(options: List(RequestOption(a))) {
-  case
-    list.find_map(
-      options,
-      fn(opt) {
-        case opt {
-          Headers(headers) -> Ok(headers)
-          _ -> Error(Nil)
-        }
-      },
-    )
-  {
-    Ok(headers) -> headers
-    Error(Nil) -> []
-  }
-}
-
-fn get_body(options: List(RequestOption(a))) {
-  case
-    list.find_map(
-      options,
-      fn(opt) {
-        case opt {
-          Body(body) -> Ok(body)
-          _ -> Error(Nil)
-        }
-      },
-    )
-  {
-    Ok(body) -> option.Some(body)
     Error(Nil) -> option.None
   }
 }
