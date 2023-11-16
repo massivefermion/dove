@@ -218,10 +218,17 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
 }
 
 pub fn get_response(conn: Connection(a), ref) {
-  result.flatten(
-    list.key_find(conn.responses, ref)
-    |> result.replace_error(error.TCPError(mug.Timeout)),
-  )
+  case list.key_pop(conn.responses, ref) {
+    Ok(#(response, other_responses)) ->
+      Ok(#(Connection(..conn, responses: other_responses), response))
+    Error(Nil) -> Ok(#(conn, Error(error.TCPError(mug.Timeout))))
+  }
+}
+
+pub fn shutdown(conn: Connection(a)) {
+  mug.shutdown(conn.socket)
+  |> result.map(fn(_) { conn.responses })
+  |> result.map_error(fn(tcp_error) { error.TCPError(tcp_error) })
 }
 
 const method_mapping = [
