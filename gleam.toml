@@ -1,5 +1,5 @@
 name = "dove"
-version = "0.7.0"
+version = "0.8.0"
 
 description = "Fast and flexible http client for Gleam"
 gleam = ">= 0.32.0"

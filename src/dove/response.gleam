@@ -7,7 +7,11 @@ import gleam/http
 import dove/error
 
 pub fn decode(response: BitArray) {
-  use #(status_line, rest) <- result.then(consume_till_crlf(response, <<>>))
+  use #(status_line, rest) <- result.then(consume_till_crlf(
+    response,
+    <<>>,
+    True,
+  ))
   use status_line <- result.then(
     bit_array.to_string(status_line)
     |> result.replace_error(error.InvalidStatusLine),
@@ -24,19 +28,26 @@ pub fn decode(response: BitArray) {
       use #(headers, _) <- result.then(decode_headers(headers, []))
 
       case
-        list.key_find(headers, "content-length")
-        |> result.map(int.parse)
-        |> result.flatten
+        #(
+          list.key_find(headers, "transfer-encoding"),
+          list.key_find(headers, "content-length")
+          |> result.map(int.parse)
+          |> result.flatten,
+        )
       {
-        Ok(0) | Error(Nil) -> Ok(#(#(status, headers, option.None), rest))
-        Ok(length) -> {
-          use #(body, rest) <- result.then(
-            consume_by_length(rest, length - 1, <<>>)
-            |> result.replace_error(error.MoreNeeded),
-          )
-
+        #(Ok("chunked"), _) -> {
+          use #(body, rest) <- result.then(gather_chunks(rest, <<>>))
           Ok(#(#(status, headers, option.Some(body)), rest))
         }
+        #(_, Ok(length)) if length > 0 -> {
+          use #(body, rest) <- result.then(consume_by_length(
+            rest,
+            length - 1,
+            <<>>,
+          ))
+          Ok(#(#(status, headers, option.Some(body)), rest))
+        }
+        _ -> Ok(#(#(status, headers, option.None), rest))
       }
     }
     Ok(More) -> Error(error.MoreNeeded)
@@ -62,15 +73,21 @@ fn decode_headers(binary: String, storage: List(http.Header)) {
 fn consume_till_crlf(
   data: BitArray,
   storage: BitArray,
+  include_crlf: Bool,
 ) -> Result(#(BitArray, BitArray), error.Error) {
   case bit_array.byte_size(data) {
     0 -> Error(error.MoreNeeded)
     _ ->
       case data {
-        <<"\r\n":utf8, rest:bits>> ->
+        <<"\r\n":utf8, rest:bits>> if include_crlf ->
           Ok(#(bit_array.append(storage, <<"\r\n":utf8>>), rest))
+        <<"\r\n":utf8, rest:bits>> -> Ok(#(storage, rest))
         <<ch:8, rest:bits>> ->
-          consume_till_crlf(rest, bit_array.append(storage, <<ch>>))
+          consume_till_crlf(
+            rest,
+            bit_array.append(storage, <<ch>>),
+            include_crlf,
+          )
       }
   }
 }
@@ -95,15 +112,41 @@ fn consume_by_length(
   data: BitArray,
   length: Int,
   storage: BitArray,
-) -> Result(#(BitArray, BitArray), Nil) {
+) -> Result(#(BitArray, BitArray), error.Error) {
   case bit_array.byte_size(data) {
-    0 -> Error(Nil)
+    0 -> Error(error.MoreNeeded)
     _ -> {
       let <<ch:8, rest:bits>> = data
       case bit_array.byte_size(storage) == length {
         True -> Ok(#(bit_array.append(storage, <<ch>>), rest))
         False ->
           consume_by_length(rest, length, bit_array.append(storage, <<ch>>))
+      }
+    }
+  }
+}
+
+fn gather_chunks(data: BitArray, storage: BitArray) {
+  case bit_array.byte_size(data) {
+    0 -> Error(error.MoreNeeded)
+    _ -> {
+      case consume_till_crlf(data, <<>>, False) {
+        Ok(#(length, rest)) ->
+          case length {
+            <<"0":utf8>> -> {
+              let <<"\r\n":utf8, rest:bits>> = rest
+              Ok(#(storage, rest))
+            }
+            _ -> {
+              case consume_till_crlf(rest, <<>>, False) {
+                Ok(#(chunk, rest)) ->
+                  gather_chunks(rest, bit_array.append(storage, chunk))
+
+                Error(error) -> Error(error)
+              }
+            }
+          }
+        Error(error) -> Error(error)
       }
     }
   }
