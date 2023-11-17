@@ -10,8 +10,8 @@ import gleam/json
 import gleam/erlang
 import gleam/erlang/process
 import gleam/http
+import gleam/http/request as gleam_http_request
 import gleam/http/response as gleam_http_response
-import gleam/http/request.{type Request} as _gleam_http_request
 import dove/tcp
 import dove/error
 import dove/request
@@ -65,7 +65,7 @@ pub fn connect(host: String, port: Int, timeout: Int) {
 
 pub fn request(
   conn: Connection(a),
-  request: Request(RequestBody),
+  request: gleam_http_request.Request(RequestBody),
   options: List(RequestOption(a)),
 ) {
   use <- bool.guard(
@@ -150,6 +150,49 @@ pub fn request(
 pub fn receive(conn: Connection(a), timeout) {
   let selector = tcp.new_selector()
   receive_internal(conn, selector, timeout)
+}
+
+pub fn build_request(
+  method: http.Method,
+  headers: List(http.Header),
+  path: String,
+  query: List(#(String, String)),
+  body: RequestBody,
+) {
+  gleam_http_request.new()
+  |> gleam_http_request.set_scheme(http.Http)
+  |> gleam_http_request.set_method(method)
+  |> gleam_http_request.set_path(path)
+  |> gleam_http_request.set_query(query)
+  |> gleam_http_request.set_body(body)
+  |> list.fold(
+    headers,
+    _,
+    fn(request, header) {
+      gleam_http_request.set_header(request, header.0, header.1)
+    },
+  )
+}
+
+pub fn build_empty_body_request(
+  method: http.Method,
+  headers: List(http.Header),
+  path: String,
+  query: List(#(String, String)),
+) {
+  gleam_http_request.new()
+  |> gleam_http_request.set_scheme(http.Http)
+  |> gleam_http_request.set_method(method)
+  |> gleam_http_request.set_path(path)
+  |> gleam_http_request.set_query(query)
+  |> gleam_http_request.set_body(EmptyRequestBody)
+  |> list.fold(
+    headers,
+    _,
+    fn(request, header) {
+      gleam_http_request.set_header(request, header.0, header.1)
+    },
+  )
 }
 
 fn receive_internal(conn: Connection(a), selector, timeout) {
