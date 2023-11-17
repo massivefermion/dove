@@ -117,10 +117,10 @@ fn consume_by_length(
     0 -> Error(error.MoreNeeded)
     _ -> {
       let <<ch:8, rest:bits>> = data
+      let storage = bit_array.append(storage, <<ch>>)
       case bit_array.byte_size(storage) == length {
-        True -> Ok(#(bit_array.append(storage, <<ch>>), rest))
-        False ->
-          consume_by_length(rest, length, bit_array.append(storage, <<ch>>))
+        True -> Ok(#(storage, rest))
+        False -> consume_by_length(rest, length, storage)
       }
     }
   }
@@ -130,23 +130,28 @@ fn gather_chunks(data: BitArray, storage: BitArray) {
   case bit_array.byte_size(data) {
     0 -> Error(error.MoreNeeded)
     _ -> {
-      case consume_till_crlf(data, <<>>, False) {
-        Ok(#(length, rest)) ->
-          case length {
-            <<"0":utf8>> -> {
-              let <<"\r\n":utf8, rest:bits>> = rest
-              Ok(#(storage, rest))
-            }
-            _ -> {
-              case consume_till_crlf(rest, <<>>, False) {
-                Ok(#(chunk, rest)) ->
-                  gather_chunks(rest, bit_array.append(storage, chunk))
+      use #(length, rest) <- result.then(consume_till_crlf(data, <<>>, False))
 
-                Error(error) -> Error(error)
-              }
+      use length <- result.then(
+        bit_array.to_string(length)
+        |> result.replace_error(error.InvalidChunkedResponse),
+      )
+
+      case int.base_parse(length, 16) {
+        Ok(0) -> {
+          let <<"\r\n":utf8, rest:bits>> = rest
+          Ok(#(storage, rest))
+        }
+        Ok(length) -> {
+          case consume_by_length(rest, length, <<>>) {
+            Ok(#(chunk, rest)) -> {
+              let <<"\r\n":utf8, rest:bits>> = rest
+              gather_chunks(rest, bit_array.append(storage, chunk))
             }
+            Error(error) -> Error(error)
           }
-        Error(error) -> Error(error)
+        }
+        Error(Nil) -> Error(error.InvalidChunkedResponse)
       }
     }
   }

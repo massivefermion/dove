@@ -9,6 +9,7 @@ pub type Error {
   TCPError(mug.Error)
   UnableToSendRequest
   HttpsNotSupportedYet
+  InvalidChunkedResponse
   InvalidHeaderName(#(String, String))
   InvalidHeaderValue(#(String, String))
 }
