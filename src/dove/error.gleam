@@ -1,4 +1,3 @@
-import gleam/json
 import mug
 
 pub type Error {
@@ -10,7 +9,6 @@ pub type Error {
   TCPError(mug.Error)
   UnableToSendRequest
   HttpsNotSupportedYet
-  DecodeError(json.DecodeError)
   InvalidHeaderName(#(String, String))
   InvalidHeaderValue(#(String, String))
 }

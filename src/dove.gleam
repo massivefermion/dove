@@ -39,7 +39,7 @@ pub opaque type Connection(a) {
   Connection(
     host: String,
     socket: mug.Socket,
-    buffer: String,
+    buffer: BitArray,
     requests: List(
       #(
         erlang.Reference,
@@ -60,7 +60,14 @@ pub opaque type Connection(a) {
 
 pub fn connect(host: String, port: Int, timeout: Int) {
   use socket <- result.then(tcp.connect(host, port, timeout))
-  Ok(Connection(host <> ":" <> int.to_string(port), socket, "", [], [], timeout))
+  Ok(Connection(
+    host <> ":" <> int.to_string(port),
+    socket,
+    <<>>,
+    [],
+    [],
+    timeout,
+  ))
 }
 
 pub fn request(
@@ -198,8 +205,8 @@ pub fn build_empty_body_request(
 fn receive_internal(conn: Connection(a), selector, timeout) {
   case conn.requests {
     [#(ref, decoder), ..rest] -> {
-      let data = case string.length(conn.buffer) {
-        0 -> receive_packet(conn.socket, selector, "", now(), timeout)
+      let data = case bit_array.byte_size(conn.buffer) {
+        0 -> receive_packet(conn.socket, selector, <<>>, now(), timeout)
         _ -> response.decode(conn.buffer)
       }
 
@@ -208,8 +215,8 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
           conn.host,
           conn.socket,
           case data {
-            Ok(#(_, rest)) -> string.append(conn.buffer, rest)
-            _ -> conn.buffer
+            Ok(#(_, rest)) -> rest
+            _ -> <<>>
           },
           rest,
           list.append(
@@ -221,28 +228,32 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                 |> result.map(fn(response) {
                   case response.0 {
                     #(status, headers, option.Some(body)) ->
-                      case decoder {
-                        option.Some(decoder) ->
-                          case json.decode(body, decoder) {
-                            Ok(value) ->
+                      case bit_array.to_string(body) {
+                        Ok(body) ->
+                          case decoder {
+                            option.Some(decoder) ->
+                              case json.decode(body, decoder) {
+                                Ok(value) ->
+                                  Ok(gleam_http_response.Response(
+                                    status,
+                                    headers,
+                                    JSONDecoded(value),
+                                  ))
+                                Error(decode_error) ->
+                                  Ok(gleam_http_response.Response(
+                                    status,
+                                    headers,
+                                    InvalidOrUnexpectedJSON(body, decode_error),
+                                  ))
+                              }
+                            option.None ->
                               Ok(gleam_http_response.Response(
                                 status,
                                 headers,
-                                JSONDecoded(value),
-                              ))
-                            Error(decode_error) ->
-                              Ok(gleam_http_response.Response(
-                                status,
-                                headers,
-                                InvalidOrUnexpectedJSON(body, decode_error),
+                                Raw(body),
                               ))
                           }
-                        option.None ->
-                          Ok(gleam_http_response.Response(
-                            status,
-                            headers,
-                            Raw(body),
-                          ))
+                        Error(Nil) -> Error(error.IsNotString)
                       }
 
                     #(status, headers, option.None) ->
@@ -265,6 +276,7 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
         _ -> receive_internal(conn, selector, timeout)
       }
     }
+    [] -> conn
   }
 }
 
@@ -315,7 +327,7 @@ fn get_decoder(options: List(RequestOption(a))) {
 fn receive_packet(
   socket: mug.Socket,
   selector: process.Selector(Result(BitArray, mug.Error)),
-  storage: String,
+  storage: BitArray,
   start_time: Int,
   timeout: Int,
 ) {
@@ -327,23 +339,18 @@ fn receive_packet(
         False ->
           case tcp.receive(socket, selector, timeout) {
             Error(tcp_error) -> Error(error.TCPError(tcp_error))
-            Ok(packet) ->
-              case bit_array.to_string(packet) {
-                Ok(packet) ->
-                  receive_packet(
-                    socket,
-                    selector,
-                    string.append(storage, packet),
-                    start_time,
-                    timeout,
-                  )
-
-                Error(Nil) -> Error(error.IsNotString)
-              }
+            Ok(packet) -> {
+              receive_packet(
+                socket,
+                selector,
+                bit_array.append(storage, packet),
+                start_time,
+                timeout,
+              )
+            }
           }
       }
     }
-
     Error(error) -> Error(error)
   }
 }
