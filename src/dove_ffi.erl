@@ -1,6 +1,6 @@
 -module(dove_ffi).
 
--export([decode_status_line/1, decode_header/1, gunzip/1, inflate/1, close_zstream/1]).
+-export([decode_status_line/1, decode_header/1, gunzip/1, inflate/1]).
 
 decode_status_line(Binary) ->
     case erlang:decode_packet(http_bin, Binary, []) of
@@ -37,16 +37,19 @@ gunzip(Compressed) ->
 
 inflate(Compressed) ->
     Z = zlib:open(),
-    ok = zlib:inflateInit(Z),
     try
-        {ok, {zlib:inflate(Z, Compressed, [{exception_on_need_dict, false}]), Z}}
+        ok = zlib:inflateInit(Z),
+        [Decompressed] = zlib:inflate(Z, Compressed, [{exception_on_need_dict, false}]),
+        {ok, Decompressed}
     catch
-        error:Reason -> {error, {sanitize(Reason), Z}}
+        error:Reason -> {error, sanitize(Reason)}
+    after
+        try
+            zlib:inflateEnd(Z)
+        catch
+            error:FailedEndReason -> {error, sanitize(FailedEndReason)}
+        end
     end.
-
-close_zstream(Z) ->
-    zlib:inflateEnd(Z),
-    zlib:close(Z).
 
 sanitize(Name) when is_atom(Name) ->
     sanitize(atom_to_binary(Name));

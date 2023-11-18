@@ -5,6 +5,7 @@ import gleam/result
 import gleam/bit_array
 import gleam/http
 import dove/error
+import gleam/io
 
 pub fn decode(response: BitArray) {
   use #(status_line, rest) <- result.then(consume_till_crlf(
@@ -60,15 +61,14 @@ pub fn decode(response: BitArray) {
             }
 
             Ok("deflate") -> {
-              use #(decompressed, zstream) <- result.then(
+              io.debug(body)
+              use decompressed <- result.then(
                 inflate(body)
                 |> result.map_error(fn(error) {
-                  close_zstream(error.1)
-                  error.DecompressionError(error.0)
+                  error.DecompressionError(error)
                 }),
               )
-              close_zstream(zstream)
-              let assert Ok(decompressed) = list.first(decompressed)
+
               Ok(#(#(status, headers, option.Some(decompressed)), rest))
             }
 
@@ -198,8 +198,6 @@ type DecodeResult {
   StatusLine(#(#(Int, Int), Int, String), String)
 }
 
-type ZStream
-
 @external(erlang, "dove_ffi", "decode_status_line")
 fn decode_status_line(binary: String) -> Result(DecodeResult, Nil)
 
@@ -210,9 +208,4 @@ fn decode_header(binary: String) -> Result(DecodeResult, Nil)
 fn gunzip(compressed: BitArray) -> Result(String, String)
 
 @external(erlang, "dove_ffi", "inflate")
-fn inflate(
-  compressed: BitArray,
-) -> Result(#(List(String), ZStream), #(String, ZStream))
-
-@external(erlang, "dove_ffi", "close_zstream")
-fn close_zstream(zstream: ZStream) -> b
+fn inflate(compressed: BitArray) -> Result(String, String)
