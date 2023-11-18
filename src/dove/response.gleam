@@ -5,7 +5,6 @@ import gleam/result
 import gleam/bit_array
 import gleam/http
 import dove/error
-import gleam/io
 
 pub fn decode(response: BitArray) {
   use #(status_line, rest) <- result.then(consume_till_crlf(
@@ -61,7 +60,6 @@ pub fn decode(response: BitArray) {
             }
 
             Ok("deflate") -> {
-              io.debug(body)
               use decompressed <- result.then(
                 inflate(body)
                 |> result.map_error(fn(error) {
@@ -72,7 +70,7 @@ pub fn decode(response: BitArray) {
               Ok(#(#(status, headers, option.Some(decompressed)), rest))
             }
 
-            Error(Nil) -> {
+            _ -> {
               use body <- result.then(
                 bit_array.to_string(body)
                 |> result.replace_error(error.IsNotString),
