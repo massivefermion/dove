@@ -228,32 +228,28 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                 |> result.map(fn(response) {
                   case response.0 {
                     #(status, headers, option.Some(body)) ->
-                      case bit_array.to_string(body) {
-                        Ok(body) ->
-                          case decoder {
-                            option.Some(decoder) ->
-                              case json.decode(body, decoder) {
-                                Ok(value) ->
-                                  Ok(gleam_http_response.Response(
-                                    status,
-                                    headers,
-                                    JSONDecoded(value),
-                                  ))
-                                Error(decode_error) ->
-                                  Ok(gleam_http_response.Response(
-                                    status,
-                                    headers,
-                                    InvalidOrUnexpectedJSON(body, decode_error),
-                                  ))
-                              }
-                            option.None ->
+                      case decoder {
+                        option.Some(decoder) ->
+                          case json.decode(body, decoder) {
+                            Ok(value) ->
                               Ok(gleam_http_response.Response(
                                 status,
                                 headers,
-                                Raw(body),
+                                JSONDecoded(value),
+                              ))
+                            Error(decode_error) ->
+                              Ok(gleam_http_response.Response(
+                                status,
+                                headers,
+                                InvalidOrUnexpectedJSON(body, decode_error),
                               ))
                           }
-                        Error(Nil) -> Error(error.IsNotString)
+                        option.None ->
+                          Ok(gleam_http_response.Response(
+                            status,
+                            headers,
+                            Raw(body),
+                          ))
                       }
 
                     #(status, headers, option.None) ->
@@ -282,9 +278,11 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
 
 pub fn get_response(conn: Connection(a), ref) {
   case list.key_pop(conn.responses, ref) {
-    Ok(#(response, other_responses)) ->
-      Ok(#(Connection(..conn, responses: other_responses), response))
-    Error(Nil) -> Ok(#(conn, Error(error.TCPError(mug.Timeout))))
+    Ok(#(response, other_responses)) -> #(
+      Connection(..conn, responses: other_responses),
+      response,
+    )
+    Error(Nil) -> #(conn, Error(error.TCPError(mug.Timeout)))
   }
 }
 

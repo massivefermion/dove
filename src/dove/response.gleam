@@ -27,7 +27,7 @@ pub fn decode(response: BitArray) {
     Ok(StatusLine(#(_, status, _reason), _)) -> {
       use #(headers, _) <- result.then(decode_headers(headers, []))
 
-      case
+      use #(response, rest) <- result.then(case
         #(
           list.key_find(headers, "transfer-encoding"),
           list.key_find(headers, "content-length")
@@ -40,16 +40,50 @@ pub fn decode(response: BitArray) {
           Ok(#(#(status, headers, option.Some(body)), rest))
         }
         #(_, Ok(length)) if length > 0 -> {
-          use #(body, rest) <- result.then(consume_by_length(
-            rest,
-            length - 1,
-            <<>>,
-          ))
+          use #(body, rest) <- result.then(consume_by_length(rest, length, <<>>))
           Ok(#(#(status, headers, option.Some(body)), rest))
         }
         _ -> Ok(#(#(status, headers, option.None), rest))
+      })
+
+      case response.2 {
+        option.Some(body) ->
+          case list.key_find(headers, "content-encoding") {
+            Ok("gzip") -> {
+              use decompressed <- result.then(
+                gunzip(body)
+                |> result.map_error(fn(error) {
+                  error.DecompressionError(error)
+                }),
+              )
+              Ok(#(#(status, headers, option.Some(decompressed)), rest))
+            }
+
+            Ok("deflate") -> {
+              use #(decompressed, zstream) <- result.then(
+                inflate(body)
+                |> result.map_error(fn(error) {
+                  close_zstream(error.1)
+                  error.DecompressionError(error.0)
+                }),
+              )
+              close_zstream(zstream)
+              let assert Ok(decompressed) = list.first(decompressed)
+              Ok(#(#(status, headers, option.Some(decompressed)), rest))
+            }
+
+            Error(Nil) -> {
+              use body <- result.then(
+                bit_array.to_string(body)
+                |> result.replace_error(error.IsNotString),
+              )
+              Ok(#(#(status, headers, option.Some(body)), rest))
+            }
+          }
+        option.None -> Ok(#(#(status, headers, option.None), rest))
       }
     }
+
     Ok(More) -> Error(error.MoreNeeded)
     Error(Nil) -> Error(error.InvalidStatusLine)
     _ -> Error(error.WrongPacketType)
@@ -164,8 +198,21 @@ type DecodeResult {
   StatusLine(#(#(Int, Int), Int, String), String)
 }
 
+type ZStream
+
 @external(erlang, "dove_ffi", "decode_status_line")
 fn decode_status_line(binary: String) -> Result(DecodeResult, Nil)
 
 @external(erlang, "dove_ffi", "decode_header")
 fn decode_header(binary: String) -> Result(DecodeResult, Nil)
+
+@external(erlang, "dove_ffi", "gunzip")
+fn gunzip(compressed: BitArray) -> Result(String, String)
+
+@external(erlang, "dove_ffi", "inflate")
+fn inflate(
+  compressed: BitArray,
+) -> Result(#(List(String), ZStream), #(String, ZStream))
+
+@external(erlang, "dove_ffi", "close_zstream")
+fn close_zstream(zstream: ZStream) -> b

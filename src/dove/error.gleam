@@ -10,6 +10,7 @@ pub type Error {
   UnableToSendRequest
   HttpsNotSupportedYet
   InvalidChunkedResponse
+  DecompressionError(String)
   InvalidHeaderName(#(String, String))
   InvalidHeaderValue(#(String, String))
 }
