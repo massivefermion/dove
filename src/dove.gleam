@@ -24,15 +24,17 @@ pub type RequestOption(a) {
 
 pub type RequestBody {
   JSON(String)
+  Binary(BitArray)
   EmptyRequestBody
   PlainText(String)
 }
 
 pub type ResponseBody(a) {
-  Raw(String)
+  Raw(BitArray)
+  String(String)
   JSONDecoded(a)
   EmptyResponseBody
-  InvalidOrUnexpectedJSON(String, json.DecodeError)
+  InvalidOrUnexpectedJSON(BitArray, json.DecodeError)
 }
 
 pub opaque type Connection(a) {
@@ -92,11 +94,13 @@ pub fn request(
 
   let #(body, headers) = case request.body {
     JSON(body) -> #(
-      option.Some(body),
+      body
+      |> bit_array.from_string
+      |> option.Some,
       list.append(
         request.headers,
         [
-          #("content-type", "application/json"),
+          #("content-type", "application/json; charset=utf-8"),
           #(
             "content-length",
             body
@@ -108,15 +112,33 @@ pub fn request(
     )
 
     PlainText(body) -> #(
-      option.Some(body),
+      body
+      |> bit_array.from_string
+      |> option.Some,
       list.append(
         request.headers,
         [
-          #("content-type", "text/plain"),
+          #("content-type", "text/plain; charset=utf-8"),
           #(
             "content-length",
             body
             |> string.length
+            |> int.to_string,
+          ),
+        ],
+      ),
+    )
+
+    Binary(body) -> #(
+      option.Some(body),
+      list.append(
+        request.headers,
+        [
+          #("content-type", "application/octet-stream"),
+          #(
+            "content-length",
+            body
+            |> bit_array.byte_size
             |> int.to_string,
           ),
         ],
@@ -230,7 +252,7 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                     #(status, headers, option.Some(body)) ->
                       case decoder {
                         option.Some(decoder) ->
-                          case json.decode(body, decoder) {
+                          case json.decode_bits(body, decoder) {
                             Ok(value) ->
                               Ok(gleam_http_response.Response(
                                 status,
@@ -244,12 +266,23 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                                 InvalidOrUnexpectedJSON(body, decode_error),
                               ))
                           }
+
                         option.None ->
-                          Ok(gleam_http_response.Response(
-                            status,
-                            headers,
-                            Raw(body),
-                          ))
+                          case bit_array.to_string(body) {
+                            Ok(body) ->
+                              Ok(gleam_http_response.Response(
+                                status,
+                                headers,
+                                String(body),
+                              ))
+
+                            Error(Nil) ->
+                              Ok(gleam_http_response.Response(
+                                status,
+                                headers,
+                                Raw(body),
+                              ))
+                          }
                       }
 
                     #(status, headers, option.None) ->

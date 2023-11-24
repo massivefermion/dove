@@ -12,6 +12,7 @@ pub fn decode(response: BitArray) {
     <<>>,
     True,
   ))
+
   use status_line <- result.then(
     bit_array.to_string(status_line)
     |> result.replace_error(error.InvalidStatusLine),
@@ -20,7 +21,7 @@ pub fn decode(response: BitArray) {
   use #(headers, rest) <- result.then(consume_till_double_crlf(rest, <<>>))
   use headers <- result.then(
     bit_array.to_string(headers)
-    |> result.replace_error(error.InvalidHeader),
+    |> result.replace_error(error.InvalidHeaders),
   )
 
   case decode_status_line(status_line) {
@@ -70,14 +71,9 @@ pub fn decode(response: BitArray) {
               Ok(#(#(status, headers, option.Some(decompressed)), rest))
             }
 
-            _ -> {
-              use body <- result.then(
-                bit_array.to_string(body)
-                |> result.replace_error(error.IsNotString),
-              )
-              Ok(#(#(status, headers, option.Some(body)), rest))
-            }
+            _ -> Ok(#(#(status, headers, option.Some(body)), rest))
           }
+
         option.None -> Ok(#(#(status, headers, option.None), rest))
       }
     }
@@ -88,10 +84,10 @@ pub fn decode(response: BitArray) {
   }
 }
 
-fn decode_headers(binary: String, storage: List(http.Header)) {
+pub fn decode_headers(binary: String, storage: List(http.Header)) {
   use result <- result.then(
     decode_header(binary)
-    |> result.replace_error(error.InvalidHeader),
+    |> result.replace_error(error.InvalidHeaders),
   )
 
   case result {
@@ -203,7 +199,7 @@ fn decode_status_line(binary: String) -> Result(DecodeResult, Nil)
 fn decode_header(binary: String) -> Result(DecodeResult, Nil)
 
 @external(erlang, "dove_ffi", "gunzip")
-fn gunzip(compressed: BitArray) -> Result(String, String)
+fn gunzip(compressed: BitArray) -> Result(BitArray, String)
 
 @external(erlang, "dove_ffi", "inflate")
-fn inflate(compressed: BitArray) -> Result(String, String)
+fn inflate(compressed: BitArray) -> Result(BitArray, String)

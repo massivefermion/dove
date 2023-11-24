@@ -2,8 +2,7 @@ import mug
 
 pub type Error {
   MoreNeeded
-  IsNotString
-  InvalidHeader
+  InvalidHeaders
   WrongPacketType
   InvalidStatusLine
   TCPError(mug.Error)

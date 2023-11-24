@@ -10,7 +10,7 @@ pub fn encode(
   path: String,
   query: option.Option(String),
   headers: List(#(String, String)),
-  body: option.Option(String),
+  body: option.Option(BitArray),
 ) {
   use <- bail_if_invalid_header(headers)
   let headers = list.prepend(headers, #("host", host))
@@ -24,14 +24,13 @@ pub fn encode(
     request_line(method, path) <> {
       list.map(headers, encode_header)
       |> string.join("")
-    } <> "\r\n" <> {
-      case body {
-        option.Some(body) -> body
-        option.None -> ""
-      }
-    }
+    } <> "\r\n"
   }
   |> bit_array.from_string
+  |> bit_array.append(case body {
+    option.Some(body) -> body
+    option.None -> <<>>
+  })
   |> Ok
 }
 
