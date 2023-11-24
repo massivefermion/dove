@@ -2,39 +2,26 @@ import gleam/int
 import gleam/bool
 import gleam/list
 import gleam/option
-import gleam/result
 import gleam/string
+import gleam/result
 import gleam/dynamic
 import gleam/bit_array
 import gleam/json
 import gleam/erlang
 import gleam/erlang/process
 import gleam/http
-import gleam/http/request as gleam_http_request
+import gleam/http/request.{type Request} as _
 import gleam/http/response as gleam_http_response
-import dove/tcp
 import dove/error
 import dove/request
 import dove/response
+import dove/internal/tcp
+import dove/internal/request.{encode} as _
+import dove/internal/response.{decode} as _
 import mug
 
 pub type RequestOption(a) {
   JSONDecoder(fn(dynamic.Dynamic) -> Result(a, List(dynamic.DecodeError)))
-}
-
-pub type RequestBody {
-  JSON(String)
-  Binary(BitArray)
-  EmptyRequestBody
-  PlainText(String)
-}
-
-pub type ResponseBody(a) {
-  Raw(BitArray)
-  String(String)
-  JSONDecoded(a)
-  EmptyResponseBody
-  InvalidOrUnexpectedJSON(BitArray, json.DecodeError)
 }
 
 pub opaque type Connection(a) {
@@ -53,7 +40,10 @@ pub opaque type Connection(a) {
     responses: List(
       #(
         erlang.Reference,
-        Result(gleam_http_response.Response(ResponseBody(a)), error.Error),
+        Result(
+          gleam_http_response.Response(option.Option(response.Body(a))),
+          error.Error,
+        ),
       ),
     ),
     default_timeout: Int,
@@ -74,7 +64,7 @@ pub fn connect(host: String, port: Int, timeout: Int) {
 
 pub fn request(
   conn: Connection(a),
-  request: gleam_http_request.Request(RequestBody),
+  request: Request(option.Option(request.Body)),
   options: List(RequestOption(a)),
 ) {
   use <- bool.guard(
@@ -90,10 +80,8 @@ pub fn request(
     }
   }
 
-  let decoder = get_decoder(options)
-
   let #(body, headers) = case request.body {
-    JSON(body) -> #(
+    option.Some(request.JSON(body)) -> #(
       body
       |> bit_array.from_string
       |> option.Some,
@@ -111,7 +99,7 @@ pub fn request(
       ),
     )
 
-    PlainText(body) -> #(
+    option.Some(request.PlainText(body)) -> #(
       body
       |> bit_array.from_string
       |> option.Some,
@@ -129,7 +117,7 @@ pub fn request(
       ),
     )
 
-    Binary(body) -> #(
+    option.Some(request.OctetStream(body)) -> #(
       option.Some(body),
       list.append(
         request.headers,
@@ -145,10 +133,11 @@ pub fn request(
       ),
     )
 
-    EmptyRequestBody -> #(option.None, request.headers)
+    option.None -> #(option.None, request.headers)
   }
 
-  use request <- result.then(request.encode(
+  let decoder = get_decoder(options)
+  use request <- result.then(encode(
     conn.host,
     method,
     request.path,
@@ -181,55 +170,12 @@ pub fn receive(conn: Connection(a), timeout) {
   receive_internal(conn, selector, timeout)
 }
 
-pub fn build_request(
-  method: http.Method,
-  headers: List(http.Header),
-  path: String,
-  query: List(#(String, String)),
-  body: RequestBody,
-) {
-  gleam_http_request.new()
-  |> gleam_http_request.set_scheme(http.Http)
-  |> gleam_http_request.set_method(method)
-  |> gleam_http_request.set_path(path)
-  |> gleam_http_request.set_query(query)
-  |> gleam_http_request.set_body(body)
-  |> list.fold(
-    headers,
-    _,
-    fn(request, header) {
-      gleam_http_request.set_header(request, header.0, header.1)
-    },
-  )
-}
-
-pub fn build_empty_body_request(
-  method: http.Method,
-  headers: List(http.Header),
-  path: String,
-  query: List(#(String, String)),
-) {
-  gleam_http_request.new()
-  |> gleam_http_request.set_scheme(http.Http)
-  |> gleam_http_request.set_method(method)
-  |> gleam_http_request.set_path(path)
-  |> gleam_http_request.set_query(query)
-  |> gleam_http_request.set_body(EmptyRequestBody)
-  |> list.fold(
-    headers,
-    _,
-    fn(request, header) {
-      gleam_http_request.set_header(request, header.0, header.1)
-    },
-  )
-}
-
 fn receive_internal(conn: Connection(a), selector, timeout) {
   case conn.requests {
     [#(ref, decoder), ..rest] -> {
       let data = case bit_array.byte_size(conn.buffer) {
         0 -> receive_packet(conn.socket, selector, <<>>, now(), timeout)
-        _ -> response.decode(conn.buffer)
+        _ -> decode(conn.buffer)
       }
 
       let conn =
@@ -257,30 +203,57 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                               Ok(gleam_http_response.Response(
                                 status,
                                 headers,
-                                JSONDecoded(value),
+                                option.Some(response.JSONDecoded(value)),
                               ))
                             Error(decode_error) ->
                               Ok(gleam_http_response.Response(
                                 status,
                                 headers,
-                                InvalidOrUnexpectedJSON(body, decode_error),
+                                option.Some(response.InvalidOrUnexpectedJSON(
+                                  body,
+                                  decode_error,
+                                )),
                               ))
                           }
 
                         option.None ->
                           case bit_array.to_string(body) {
                             Ok(body) ->
-                              Ok(gleam_http_response.Response(
-                                status,
-                                headers,
-                                String(body),
-                              ))
+                              case list.key_find(headers, "content-type") {
+                                Ok(mime) ->
+                                  case
+                                    string.contains(mime, "application/json")
+                                  {
+                                    True ->
+                                      Ok(gleam_http_response.Response(
+                                        status,
+                                        headers,
+                                        option.Some(response.HeadersSayJSON(
+                                          body,
+                                        )),
+                                      ))
+
+                                    False ->
+                                      Ok(gleam_http_response.Response(
+                                        status,
+                                        headers,
+                                        option.Some(response.PlainText(body)),
+                                      ))
+                                  }
+
+                                Error(Nil) ->
+                                  Ok(gleam_http_response.Response(
+                                    status,
+                                    headers,
+                                    option.Some(response.PlainText(body)),
+                                  ))
+                              }
 
                             Error(Nil) ->
                               Ok(gleam_http_response.Response(
                                 status,
                                 headers,
-                                Raw(body),
+                                option.Some(response.OctetStream(body)),
                               ))
                           }
                       }
@@ -289,7 +262,7 @@ fn receive_internal(conn: Connection(a), selector, timeout) {
                       Ok(gleam_http_response.Response(
                         status,
                         headers,
-                        EmptyResponseBody,
+                        option.None,
                       ))
                   }
                 })
@@ -362,7 +335,7 @@ fn receive_packet(
   start_time: Int,
   timeout: Int,
 ) {
-  case response.decode(storage) {
+  case decode(storage) {
     Ok(value) -> Ok(value)
     Error(error.MoreNeeded) -> {
       case now() - start_time >= timeout * 1_000_000 {

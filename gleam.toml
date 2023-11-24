@@ -1,5 +1,5 @@
 name = "dove"
-version = "0.11.0"
+version = "0.12.0"
 
 description = "HTTP client written in and for Gleam"
 gleam = ">= 0.32.0"
@@ -7,13 +7,6 @@ licences = ["Apache-2.0"]
 links = [{title = "Gleam", href = "https://gleam.run"}]
 repository = {type = "github", user = "massivefermion", repo = "dove"}
 target = "erlang"
-
-internal_modules = [
-  "dove/tcp",
-  "dove/client",
-  "dove/request",
-  "dove/response",
-]
 
 [dependencies]
 gleam_erlang = "~> 0.23"
